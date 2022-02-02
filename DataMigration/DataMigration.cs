@@ -66,13 +66,13 @@ namespace DataMigration
 
                     Migrate(policies);
 
-                    //var retryTransactions = new List<IPolicyQuoteTransaction>();
-                    //policies.ForEach(policy =>
-                    //{
-                    //    var transactions = policy.Details.Where(transaction => transaction.LoadedToWips == false);
-                    //    retryTransactions.AddRange(transactions);
-                    //});
-                    //RetryTranscations(retryTransactions);
+                    var retryTransactions = new List<IPolicyQuoteTransaction>();
+                    policies.ForEach(policy =>
+                    {
+                        var transactions = policy.Details.Where(transaction => transaction.RetryCount > 0);
+                        retryTransactions.AddRange(transactions);
+                    });
+                    RetryTranscations(retryTransactions);
 
                     GetBatchResults(policies);
                     progress.Passed += policies.Where(p => p.MigrationStatus == true).Count();
@@ -153,7 +153,7 @@ namespace DataMigration
             {
                 progress.Status = $"Retrying {currentRunType} - {transaction.PolicyQuoteNumber.Trim()}, Transaction: {transaction.TransactionNumber.Trim()}, {transaction.TransactionType.Trim()}, {transaction.AlternateTransactionType.Trim()}";
 
-                var task = RunTask(transaction);
+                var task = RunTask(transaction, true);
                 if (task != null)
                 {
                     taskList.Add(task);
@@ -162,7 +162,7 @@ namespace DataMigration
             Task.WaitAll(taskList.ToArray());
         }
 
-        private Task RunTask(IPolicyQuoteTransaction transaction)
+        private Task RunTask(IPolicyQuoteTransaction transaction, bool isRetry = false)
         {
             Task task = Task.Factory.StartNew((obj) =>
             {
@@ -178,6 +178,7 @@ namespace DataMigration
                     else
                     {
                         logger.LogInfo(GetLogDetailMessage("Database Migration Failure", transaction));
+                        transaction.RetryCount++;
                     }
                 }
                 else
@@ -185,6 +186,9 @@ namespace DataMigration
                     logger.LogInfo(GetLogDetailMessage("Load Wips Failure", transaction));
                     transaction.RetryCount++;
                 }
+
+                if (isRetry == true) Task.Delay(1);  //try to avoid any cuncurreny issues because of two threads are attempting to insert some record in the database at the the exact same time
+
             }, transaction, TaskCreationOptions.LongRunning);
 
             return task;
